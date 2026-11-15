@@ -414,6 +414,9 @@ Line counts are text lines; dependencies and generated or minified files (`asset
 
 <!-- inventory:end -->
 
+The two PDFs in the root are documents rather than code: `Project_Guidlines.pdf` is the assignment
+specification and `D1_Concept_iSpindel_Steiner_Haedener.pdf` is the submitted concept (D1).
+
 Licence
 -------
 
