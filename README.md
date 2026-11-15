@@ -417,10 +417,18 @@ Line counts are text lines; dependencies and generated or minified files (`asset
 Licence
 -------
 
-**Public domain** - the [Unlicense](LICENSE) (SPDX `Unlicense`). Copy it, modify it, sell it, ship it,
-teach with it: no conditions, no attribution required. The Unlicense is a public-domain dedication
-with a fallback grant for jurisdictions that do not let you waive copyright outright, Switzerland and
-Germany among them.
+**Attribution-NonCommercial** - see [`LICENSE`](LICENSE). Use it, modify it and share it free of
+charge as a private person or in teaching and research at a public university, as long as you give
+credit:
+
+```text
+Fermentation Monitoring System (iSpindel)
+Oskar Steiner, Anja Hädener - ZHAW Digital Food Processing HS26
+https://github.com/osmast/ISpindel-Dashboard
+```
+
+and add that reference - with the version you used - to anything you publish with it. Commercial use
+needs a paid licence from the authors. This is deliberately **not** an open source licence.
 
 Third-party material keeps its own licence: the IBM XGA-AI fonts are **CC BY-SA 4.0** by VileR
 (`assets/fonts/LICENSE-oldschool-pc-font-pack.txt` - that one *does* require attribution), and the
@@ -428,7 +436,7 @@ measurements in [`seed/`](seed/) were recorded by several participants of the mo
 
 The beer tab icon (`assets/favicon-beer.svg`), the beer-glass cursor (`assets/cursor-beer.svg` +
 `.png`) and the bubble trail (`assets/bubbles.js` + the plain-CSS part of `assets/input.pcss`) are
-made for this project and are covered by the public domain dedication like the rest.
+made for this project and are covered by the licence above.
 
 The comments in the code name the requirement they implement (`FR-01` ... `FR-22`, `NFR-01` ...
 `NFR-09`), which come from the assignment specification; the code is the traceability.
