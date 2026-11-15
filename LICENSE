@@ -14,7 +14,7 @@ Source Definition requires.
 
        Fermentation Monitoring System (iSpindel)
        Oskar Steiner, Anja Hädener - ZHAW Digital Food Processing HS26
-       https://github.com/osmast/ISpindel-Dashboard
+       https://github.com/osmast/ISpindelMonitor
 
    If you **publish** anything that used it - a paper, a thesis, a report, course material, slides, a
    blog post, a released dataset - add the same reference, together with the version or commit you

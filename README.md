@@ -1,4 +1,4 @@
-ispindel-monitor
+ISpindelMonitor
 ================
 
 A fermentation monitor for a small brewery, running on a Raspberry Pi. An **iSpindel** floats in the
@@ -53,7 +53,7 @@ Fresh Raspberry Pi OS to a running dashboard (NFR-08). `<engine>` below is `podm
 4. Clone it, start it, install the two systemd units (`/srv/ispindel` is the path they expect):
 
 ```bash
-sudo mkdir -p /srv && sudo git clone https://github.com/osmast/ISpindel-Dashboard /srv/ispindel
+sudo mkdir -p /srv && sudo git clone https://github.com/osmast/ISpindelMonitor /srv/ispindel
 cd /srv/ispindel && sudo podman compose up -d --build
 
 sudo cp deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
@@ -73,8 +73,8 @@ Anywhere else (`macOS`, Linux, Windows) the only prerequisite is a container eng
 | check | `<engine> compose version` |
 
 ```bash
-git clone https://github.com/osmast/ISpindel-Dashboard ispindel-monitor
-cd ispindel-monitor && podman compose up -d --build        # docker compose works the same
+git clone https://github.com/osmast/ISpindelMonitor
+cd ISpindelMonitor && podman compose up -d --build         # docker compose works the same
 ```
 
 ### Point an iSpindel at it
@@ -427,7 +427,7 @@ credit:
 ```text
 Fermentation Monitoring System (iSpindel)
 Oskar Steiner, Anja Hädener - ZHAW Digital Food Processing HS26
-https://github.com/osmast/ISpindel-Dashboard
+https://github.com/osmast/ISpindelMonitor
 ```
 
 and add that reference - with the version you used - to anything you publish with it. Commercial use
