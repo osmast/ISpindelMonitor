@@ -420,22 +420,26 @@ specification and `D1_Concept_iSpindel_Steiner_Haedener.pdf` is the submitted co
 Licence
 -------
 
-**Attribution-NonCommercial** - see [`LICENSE`](LICENSE). Use it, modify it and share it free of
-charge as a private person or in teaching and research at a public university, as long as you give
-credit:
+**CC BY-NC-SA 4.0** - see [`LICENSE`](LICENSE) (SPDX `CC-BY-NC-SA-4.0`). Use it, modify it, teach
+with it, share it - as long as you give credit, anything adapted stays under the same licence, and
+nobody uses it commercially without asking.
+
+Give credit like this (section 3(a) of the licence):
 
 ```text
 Fermentation Monitoring System (iSpindel)
 Oskar Steiner, Anja Hädener - ZHAW Digital Food Processing HS26
+Licensed under CC BY-NC-SA 4.0 - https://creativecommons.org/licenses/by-nc-sa/4.0/
 https://github.com/osmast/ISpindelMonitor
 ```
 
-and add that reference - with the version you used - to anything you publish with it. Commercial use
-needs a paid licence from the authors. This is deliberately **not** an open source licence.
+If you publish work that used it, the authors ask you to cite it in the same form, with the version
+you used - a request, not a condition of the licence. **Commercial use** is not granted: it needs a
+separate written permission from the authors (oskarsteiner@protonmail.com).
 
 Third-party material keeps its own licence: the IBM XGA-AI fonts are **CC BY-SA 4.0** by VileR
-(`assets/fonts/LICENSE-oldschool-pc-font-pack.txt` - that one *does* require attribution), and the
-measurements in [`seed/`](seed/) were recorded by several participants of the module.
+(`assets/fonts/LICENSE-oldschool-pc-font-pack.txt` - those files may also be used commercially), and
+the measurements in [`seed/`](seed/) were recorded by several participants of the module.
 
 The beer tab icon (`assets/favicon-beer.svg`), the beer-glass cursor (`assets/cursor-beer.svg` +
 `.png`) and the bubble trail (`assets/bubbles.js` + the plain-CSS part of `assets/input.pcss`) are
