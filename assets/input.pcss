@@ -135,12 +135,9 @@ details[data-card][open]::details-content {
 
 /* The pointer of the dashboard: **one** static beer glass, assets/cursor-beer.svg / .png.
  *
- * The former second layer - a live DOM glass of assets/cursor.js that followed the mouse and
- * filled up on hover, plus the `cursor-beer-hover.svg` / `.png` variant for clickable elements -
- * was removed. It swapped images on hover and ran a mousemove handler, which is what made the
- * pointer feel jittery. The hover variant is gone; clickable elements inherit the same glass.
- * assets/zz-cursor.css is the runtime override that wins over the compiled tailwind.css
- * (which still carries the old hover rule until the CSS is rebuilt from this file).
+ * There is no hover swap and no scripting: clickable elements inherit the same single glass. (An
+ * earlier live DOM glass of assets/cursor.js with a `cursor-beer-hover` image swap was removed -
+ * the mousemove handler and the swap made the pointer feel jittery.)
  *
  * The raster file comes first in the chain, because only Chromium 122+/Edge understands an SVG
  * cursor while Firefox and Safari fall through to the image and then to the normal pointer. The
@@ -168,89 +165,6 @@ details[data-card][open]::details-content {
   }
 }
 
-/* The live glass of assets/cursor.js. The flag attribute comes from the script (**not** a class:
- * a `beer-cursor` class on <html> was matched by the `.beer-cursor` rule below as well, which shrank
- * the whole page to a 34 px invisible box - the white page of 29.10.2026). So this only ever applies
- * while the glass is really there; `cursor: none` on everything is the price of a custom pointer -
- * the text I-beam of the inputs is gone with it, and the glass marks the point instead. */
-html[data-beer-cursor],
-html[data-beer-cursor] * {
-  cursor: none;
-}
-
-.beer-cursor {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 34px;                 /* keep in sync with SIZE in assets/cursor.js */
-  height: 34px;
-  z-index: 99999;
-  pointer-events: none;
-  opacity: 0;                  /* shown with the first pointer movement */
-  transition: opacity 0.15s linear;
-  transform: translate3d(-100px, -100px, 0);
-  will-change: transform;
-}
-
-.beer-cursor.is-visible {
-  opacity: 1;
-}
-
-/* the liquid: a rect as tall as the glass interior, pushed out of sight at the bottom and slid up
- * to the brim while the pointer is over something clickable. A CSS transform rather than the y and
- * height geometry properties of the original design, because those are not supported everywhere. */
-.beer-cursor .beer-liquid {
-  transform: translateY(26px);
-  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.beer-cursor.is-hovering .beer-liquid {
-  transform: translateY(0);
-}
-
-/* the frothy head, rising over the rim */
-.beer-cursor .beer-foam {
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 0.25s ease-out, transform 0.25s ease-out;
-}
-
-.beer-cursor.is-hovering .beer-foam {
-  opacity: 1;
-  transform: translateY(0);
-  transition-delay: 0.15s;
-}
-
-/* the CO2 rising through the glass - only while it is full */
-.beer-cursor .beer-cursor-bubble {
-  opacity: 0;
-}
-
-.beer-cursor.is-hovering .beer-cursor-bubble {
-  animation: cursor-fizz 2.4s linear infinite;
-}
-
-.beer-cursor .beer-cursor-bubble:nth-of-type(2) {
-  animation-delay: 0.7s;
-}
-
-.beer-cursor .beer-cursor-bubble:nth-of-type(3) {
-  animation-delay: 1.4s;
-}
-
-@keyframes cursor-fizz {
-  0% {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-  25% {
-    opacity: 0.7;
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-}
 
 /* The bubble trail of assets/bubbles.js: one fixed, click-through layer over the page (below the
  * toast corner, above the content). A bubble has an outer element that rises and pops and an inner

@@ -1,8 +1,6 @@
-<!-- The pointer while it is NOT over anything clickable: an EMPTY beer glass - the same glass as the
-     live pointer of assets/cursor.js, scaled from its 48 x 48 design down to 32 x 32 (factor 2/3).
-     This file is the fallback: the live pointer is the glass that follows the mouse and fills up on
-     hover; this static one is what a browser without JavaScript shows - and, more relevant, what a
-     reader who asked for reduced motion gets, because cursor.js stands down for them.
+<!-- The pointer: an EMPTY beer glass. The dashboard uses one static glass everywhere - there is no
+     live pointer and no JavaScript involved. Traced from a 48 x 48 design down to 32 x 32
+     (factor 2/3).
      Hotspot 7 7 = the rim of the glass (11,10 in the 48-unit design), so a click lands exactly where
      the drawing points; the filled dot marks that point. Decoration - no FR/NFR asks for a custom
      pointer (NFR-05 is about the language of the UI), so no requirement id is named here.

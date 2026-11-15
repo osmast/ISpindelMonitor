@@ -31,12 +31,10 @@ TARGET_TEMP_C = DASH["target_temp_c"]
 
 CHART_DAYS = DASH["device_chart_days"]
 
-# FR-16/FR-22: the selectable time ranges (SQL interval, None = whole experiment).
-RANGES = {"all": None, "7d": "7 days", "24h": "24 hours"}
-# Compact radio labels (the control row); the long wording stays for the export/toast messages.
-RANGE_TEXT = {"all": "all", "7d": "7d", "24h": "24h"}
-RANGE_LONG = {"all": "entire experiment", "7d": "last 7 days", "24h": "last 24 h"}
-RANGE_FILTER = "AND (%(since)s::interval IS NULL OR m.recorded_at >= now() - %(since)s::interval)"
+# FR-16/FR-22: the time range is set by the controls under the chart - two date+time pickers in the
+# absolute mode, a from/to hour range (hours since each experiment's start) in the relative one.
+# Empty ends mean "the whole experiment". The helpers that turn them into SQL and into the pinned x
+# axis live next to `chart_window` below.
 
 DEV_REPEAT = 1   # only > 1 for layout tests; FR-15 wants one card per real device
 
@@ -115,7 +113,7 @@ def device_form(values=None, disabled=False):
 
 
 def broker_form(values=None):
-    """The fields of the FR-15 broker dialog - defined **above** `layout()` on purpose: the static
+    """The fields of the FR-07 broker dialog - defined **above** `layout()` on purpose: the static
     layout renders it as the initial children of `#broker-form`, because Dash validates a callback's
     State ids against the layout at import time (the same reason `experiment_form` and the FR-12
     `device_form` live here). `None` = an empty form for "Add broker", a row = edit."""
@@ -215,7 +213,7 @@ def layout():
             dmc.TabsPanel(html.Div(id="exp-completed"), value="completed", pt="md"),
             dmc.TabsPanel(children=[
                 html.Div(id="devices-table"),
-                # FR-15: the brokers are visible right here, without opening the dialog - a broker
+                # FR-07: the brokers are visible right here, without opening the dialog - a broker
                 # that is configured but not delivering (or not authorised) has no device row yet,
                 # so the devices table alone would look as if nothing had happened.
                 html.Div(id="broker-inline", className="mt-4"),
@@ -252,12 +250,13 @@ def layout():
                          children=[
                     ui.field(
                         None,
-                        # two independent toggles instead of three radio states: both checked =
-                        # gravity + temperature; one checked = that series only
-                        dcc.Checklist(id="chart-series", value=["gravity", "temperature"],
-                                      options=[{"label": "°P", "value": "gravity"},
-                                               {"label": "°C", "value": "temperature"}],
-                                      className="flex gap-4 text-sm",
+                        # one checkbox per data point (`charts.METRICS`): gravity, temperature,
+                        # tilt, battery, interval and signal can be mixed freely. The labels are
+                        # two characters so the row stays narrow.
+                        dcc.Checklist(id="chart-series", value=list(charts.DEFAULT_METRICS),
+                                      options=[{"label": v[0], "value": k}
+                                               for k, v in charts.METRICS.items()],
+                                      className="flex flex-wrap gap-4 text-sm",
                                       labelClassName="flex min-h-11 cursor-pointer "
                                                      "items-center gap-2"),
                         className="xl:justify-self-start"),
@@ -270,20 +269,37 @@ def layout():
                                        labelClassName="flex min-h-11 cursor-pointer "
                                                       "items-center gap-2"),
                         className="md:justify-self-center md:text-center"),
-                    # the range options and the compact CSV export share the right-hand group
+                    # FR-16: the range control. `range-abs` (two date+time fields) belongs to the
+                    # absolute axis, `range-rel` (two counters - hours since the experiment's start)
+                    # to the relative one; `range_controls` shows whichever pair matches the axis.
+                    # An empty end means "no bound", i.e. the whole experiment. `range` is the store
+                    # the chart and the CSV export read - it holds both pairs.
                     html.Div(
-                        className="flex items-center gap-3 md:col-span-2 "
+                        className="flex flex-wrap items-center gap-2 md:col-span-2 "
                                   "md:justify-self-end xl:col-span-1",
                         children=[
-                            dcc.RadioItems(id="range", value="all",
-                                           options=[{"label": label, "value": key}
-                                                    for key, label in RANGE_TEXT.items()],
-                                           className="flex gap-4 text-sm md:justify-end",
-                                           labelClassName="flex min-h-11 cursor-pointer "
-                                                          "items-center gap-2"),
+                            html.Div(id="range-abs", className="flex items-center gap-2",
+                                     children=[
+                                html.Div(className="w-40", children=[
+                                    dmc.TextInput(id="range-from", size="sm",
+                                                  placeholder="2026-11-12T16:30")]),
+                                html.Div(className="w-40", children=[
+                                    dmc.TextInput(id="range-to", size="sm",
+                                                  placeholder="2026-11-12T16:30")]),
+                            ]),
+                            html.Div(id="range-rel", className="flex items-center gap-2",
+                                     style={"display": "none"}, children=[
+                                html.Div(className="w-28", children=[
+                                    dmc.NumberInput(id="range-h-from", size="sm", min=0, step=1,
+                                                    hideControls=False, placeholder="from h")]),
+                                html.Div(className="w-28", children=[
+                                    dmc.NumberInput(id="range-h-to", size="sm", min=0, step=1,
+                                                    hideControls=False, placeholder="to h")]),
+                            ]),
                             html.Button(
                                 "csv", id="export-selected", className="csv-export",
                                 title="export every experiment shown in the chart as CSV"),
+                            dcc.Store(id="range", data={"abs": [None, None], "rel": [None, None]}),
                         ]),
                 ])),
         # FR-21: the download target of the FR-05 row export (an invisible component).
@@ -313,7 +329,7 @@ def layout():
                 ]),
             ]),
 
-        # FR-15: the broker dialog. Same shape as the experiment dialog - the static shell holds
+        # FR-07: the broker dialog. Same shape as the experiment dialog - the static shell holds
         # the list and the form, the callback only opens it and writes through it.
         dcc.Store(id="broker-target", data=None),
         dcc.Store(id="broker-reload", data=0),
@@ -343,7 +359,7 @@ def layout():
         dcc.Interval(id="tick1s", interval=LIVE),
         # device id -> {"last", "due"} epochs, written by update_device_times, rendered as
         # "last: 12 s ago · upcoming: in 12 s" by the clientside callback below (the id and not
-        # the name: FR-15 - two brokers may carry an iSpindel with the same name)
+        # the name: FR-07 - two brokers may carry an iSpindel with the same name)
         dcc.Store(id="device_times", data={}),
         # {"mobile": bool}, written by the viewport callback, used to drop the legend (NFR-06)
         dcc.Store(id="viewport", data={}),
@@ -371,6 +387,22 @@ THEME = {"fontFamily": charts.FONT_FAMILY,
 
 # dmc supplies the responsive grid; MantineProvider sets up its theme (CSS variables).
 app.layout = dmc.MantineProvider(layout(), theme=THEME)
+
+# FR-16: keep the two range controls and the `range` store in sync with the selected time axis.
+# A **server** callback, not a clientside one, so `tools/check_requirements.py` can call it: only the
+# pair that belongs to the axis is shown - the date+time pickers for "time (local)", the hour inputs
+# for "hours since start" - and both pairs travel in the store, so the chart and the CSV export read
+# a single value.
+@app.callback(Output("range-abs", "style"), Output("range-rel", "style"), Output("range", "data"),
+              Input("relative", "value"),
+              Input("range-from", "value"), Input("range-to", "value"),
+              Input("range-h-from", "value"), Input("range-h-to", "value"))
+def range_controls(axis, date_from, date_to, hour_from, hour_to):
+    """FR-16: show the range control of the selected axis and pack both ranges into the store."""
+    rel = axis == "rel"
+    return ({"display": "none"} if rel else {"display": "flex"},
+            {"display": "flex"} if rel else {"display": "none"},
+            {"abs": [date_from or None, date_to or None], "rel": [hour_from, hour_to]})
 
 # The times line of every card ticks in the browser - one JS function for every card, no round trip.
 app.clientside_callback(
@@ -532,7 +564,7 @@ def update_dashboard(_, __, viewport, opened, selected):
 @app.callback(Output("device_times", "data"), Input("tick", "n_intervals"))
 def update_device_times(_):
     """Last measurement and next transmission per device, as absolute epochs. Keyed by the
-    device id (FR-15: the iSpindel name is not unique across brokers).
+    device id (FR-07: the iSpindel name is not unique across brokers).
 
     Deliberately on `tick` (15 s), **not** `tick1s`: the store only needs the two absolute epochs,
     and the 1 s clientside callback recomputes "12 s ago" / "in 12 s" from them in the browser.
@@ -611,7 +643,7 @@ def ispindel_overview(open_cards=None, mobile=False, host=""):
                     ORDER BY l.broker_label NULLS FIRST, l.mqtt_name""")
     if not rows:
         return mqtt_hint(host)
-    history = query("""SELECT device_id, recorded_at,
+    history = query("""SELECT device_id, recorded_at, interval_s,
                               gravity_plato::float8 AS gravity_plato,
                               temp_c::float8 AS temp_c
                        FROM measurement
@@ -824,7 +856,7 @@ def device_card(latest, points, slot=0, batch=None, mobile=False):
     due = None if (last_epoch is None or not latest["interval_s"]) else \
         last_epoch + latest["interval_s"]
     name = latest["mqtt_name"]
-    # FR-15: the identity in the DOM is the device id, not the name - two participants may use the
+    # FR-07: the identity in the DOM is the device id, not the name - two participants may use the
     # same iSpindel name on their own brokers, and the buttons have to resolve the right device.
     device_id = latest["device_id"]
     broker = latest.get("broker_label")   # None = the broker of config.yml, nothing to show
@@ -982,7 +1014,7 @@ def device_card(latest, points, slot=0, batch=None, mobile=False):
                     html.Span(f"tilt {ui.num(latest['tilt_deg'], 1)}° · "
                               f"RSSI {ui.num(latest['rssi_dbm'], 0)} dBm · "
                               f"interval {ui.num(latest['interval_s'], 0)} s"
-                              # FR-15: which broker this iSpindel publishes to (empty for our own)
+                              # FR-07: which broker this iSpindel publishes to (empty for our own)
                               + (f" · {broker}" if broker else "")),
                     # FR-13/FR-14: time of the last measurement, its age, the next transmission
                     html.Span(id={"type": "times", "device": device_id, "slot": slot},
@@ -1058,7 +1090,7 @@ DEVICE_HEADERS = ["Name (MQTT topic)", "Broker (address)", "Display name", "Stat
 
 
 def broker_cell(row, host=""):
-    """The broker of one device as an address plus its name (FR-15).
+    """The broker of one device as an address plus its name (FR-07).
 
     For the **own** broker the address is the one an iSpindel has to publish to: the LAN address of
     this machine when the dashboard was opened through it (`host`, computed by `broker_host`). The
@@ -1123,7 +1155,7 @@ def delete_device(device_id):
 def device_rows():
     """One row per device: the master data plus what its latest measurement reported.
 
-    FR-15: the broker of every device is part of the row - the iSpindel name alone does not
+    FR-07: the broker of every device is part of the row - the iSpindel name alone does not
     identify a device any more once several brokers are in play. `broker_id IS NULL` means the
     broker of config.yml, whose address is not in the database but in the configuration file.
     """
@@ -1141,7 +1173,7 @@ def device_rows():
 
 def device_table(rows, host=""):
     """The FR-12 device overview: every iSpindel the system knows, with the broker it publishes to
-    (FR-15) and its settings action. The empty state is the same "where to point an iSpindel" hint
+    (FR-07) and its settings action. The empty state is the same "where to point an iSpindel" hint
     as the FR-13 overview."""
     body = [[html.Span(r["mqtt_name"]),
              broker_cell(r, host),
@@ -1178,13 +1210,13 @@ def update_device(device_id, display_name, active):
     return ui.alert(f"iSpindel '{values['mqtt_name']}' saved - {state} (FR-12)", "green"), 1
 
 
-# FR-15: the brokers of the other iSpindels in use. The **own** broker is not stored anywhere -
+# FR-07: the brokers of the other iSpindels in use. The **own** broker is not stored anywhere -
 # it stays in config.yml (NFR-08) - so the dialog renders it as the first, read-only row.
 BROKER_HEADERS = ["Broker", "Address", "Topic prefix", "iSpindels", "State", "Actions"]
 
 
 def broker_rows():
-    """Every broker the ingest listens on (FR-15): config.yml first, then the added ones.
+    """Every broker the ingest listens on (FR-07): config.yml first, then the added ones.
 
     `last_stored` is the newest measurement of that broker's iSpindels. It is what makes the state
     of the **own** broker visible: the ingest writes its connection state into `mqtt_broker`, and
@@ -1224,7 +1256,7 @@ def error_text(error):
 
 
 def broker_state(row):
-    """The state chip of one broker row (FR-15): paused > error > delivering > silent/empty.
+    """The state chip of one broker row (FR-07): paused > error > delivering > silent/empty.
 
     `delivering` is decided by the newest **stored** measurement of that broker's iSpindels, not by
     the message counter alone: the own broker has no row the ingest could write into, so only the
@@ -1275,7 +1307,7 @@ def broker_actions(row):
 
 
 def broker_table(rows, with_actions=True):
-    """The FR-15 broker list. `with_actions=False` is the read-only version that the Devices tab
+    """The FR-07 broker list. `with_actions=False` is the read-only version that the Devices tab
     shows next to the devices - editing happens in the dialog, which passes the ids it needs."""
     headers = BROKER_HEADERS if with_actions else [h for h in BROKER_HEADERS if h != "Actions"]
     body = []
@@ -1286,23 +1318,23 @@ def broker_table(rows, with_actions=True):
     return ui.table(headers, body, empty="no broker configured")
 
 
-# (the FR-15 broker form is defined above, next to experiment_form/device_form: the static layout
+# (the FR-07 broker form is defined above, next to experiment_form/device_form: the static layout
 #  renders it as the initial children of `#broker-form`, and Dash validates the callback's State
 #  ids against the layout as it exists at import time - a form created only on click is dead.)
 
 
 def broker_values(broker_id):
-    """The dialog's values of one broker, or None when the row is gone (FR-15)."""
+    """The dialog's values of one broker, or None when the row is gone (FR-07)."""
     rows = query("""SELECT label, host, port, topic_prefix, username, password, is_enabled
                     FROM mqtt_broker WHERE id = %s""", (broker_id,))
     return rows[0] if rows else None
 
 
 def save_broker(broker_id, label, host, port, prefix, username, password, enabled):
-    """Insert (broker_id None) or update one broker. Returns (alert, reload_delta) - FR-15."""
+    """Insert (broker_id None) or update one broker. Returns (alert, reload_delta) - FR-07."""
     label, host = (label or "").strip(), (host or "").strip()
     if not label or not host:
-        return ui.alert("a broker needs a label and a host (FR-15)", "amber"), 0
+        return ui.alert("a broker needs a label and a host (FR-07)", "amber"), 0
     # "160.85.124.31:1883" pasted into the host field: take the port from the address, the port
     # field stays the fallback. More than one colon means IPv6 (`::1`) and is left alone.
     port_in_host = None
@@ -1328,7 +1360,7 @@ def save_broker(broker_id, label, host, port, prefix, username, password, enable
                        VALUES (%(label)s, %(host)s, %(port)s, %(topic_prefix)s, %(username)s,
                                %(password)s, %(enabled)s)""", values)
             return ui.alert(f"broker '{label}' added{tail} - the ingest connects within {refresh} s "
-                            f"(FR-15)", "green"), 1
+                            f"(FR-07)", "green"), 1
         values["id"] = broker_id
         execute("""UPDATE mqtt_broker SET label = %(label)s, host = %(host)s, port = %(port)s,
                           topic_prefix = %(topic_prefix)s, username = %(username)s,
@@ -1336,9 +1368,9 @@ def save_broker(broker_id, label, host, port, prefix, username, password, enable
                           last_error = NULL          -- the old failure does not belong to this
                       WHERE id = %(id)s""", values)
         return ui.alert(f"broker '{label}' saved{tail} - the ingest reconnects within {refresh} s "
-                        f"(FR-15)", "green"), 1
+                        f"(FR-07)", "green"), 1
     except psycopg.errors.UniqueViolation:
-        return ui.alert(f"a broker named '{label}' exists already (FR-15)", "amber"), 0
+        return ui.alert(f"a broker named '{label}' exists already (FR-07)", "amber"), 0
     except psycopg.Error as exc:
         return ui.alert(f"database error: {exc}", "red"), 0
 
@@ -1347,7 +1379,7 @@ def delete_broker(broker_id):
     """Delete a broker together with everything it delivered. Returns (alert, reload_delta).
 
     `measurement` and `experiment` reference `device` without a cascade, so the rows of that
-    broker's iSpindels go first - measurements, then experiments, then the devices (FR-15).
+    broker's iSpindels go first - measurements, then experiments, then the devices (FR-07).
     """
     rows = query("""SELECT b.label,
                            (SELECT count(*) FROM device d WHERE d.broker_id = b.id) AS devices,
@@ -1368,7 +1400,7 @@ def delete_broker(broker_id):
 
 
 def toggle_broker(broker_id):
-    """Pause / resume one broker (FR-15): the ingest stops or starts listening within one pass."""
+    """Pause / resume one broker (FR-07): the ingest stops or starts listening within one pass."""
     rows = query("SELECT label, is_enabled FROM mqtt_broker WHERE id = %s", (broker_id,))
     if not rows:
         return ui.alert("that broker no longer exists", "amber"), 0
@@ -1376,7 +1408,7 @@ def toggle_broker(broker_id):
     execute("UPDATE mqtt_broker SET is_enabled = %s, last_error = NULL WHERE id = %s",
             (enabled, broker_id))
     return ui.alert(f"broker '{rows[0]['label']}' "
-                    f"{'resumed' if enabled else 'paused'} (FR-15)", "green"), 1
+                    f"{'resumed' if enabled else 'paused'} (FR-07)", "green"), 1
 
 
 # FR-17: toggling an experiment in the chart is pure client state. Keeping it in the browser
@@ -1532,7 +1564,9 @@ def end_experiment(device):
     The stored end time is the **last measurement** of the experiment, not the moment the
     user pressed the button: a fermentation is over when the iSpindel stopped reporting, and
     the UI click can be hours or days later. With no measurement at all, `now()` is the only
-    honest fallback. `GREATEST(..., started_at + 1 s)` keeps the schema CHECK satisfied.
+    honest fallback. `GREATEST(..., started_at + 1 µs)` keeps the schema CHECK satisfied - a
+    `+ 1 s` guard stored an end time up to a second in the future, which then made the
+    EXCLUDE constraint reject the *next* experiment started immediately after the end (FR-03).
     """
     device_id = resolve_device(device)
     if not device_id:
@@ -1545,7 +1579,7 @@ def end_experiment(device):
                SET ended_at = GREATEST(
                    COALESCE((SELECT max(m.recorded_at) FROM measurement m
                              WHERE m.experiment_id = e.id), now()),
-                   e.started_at + interval '1 second')
+                   e.started_at + interval '1 microsecond')
                WHERE e.id = %s""", (row[0]["id"],))
     return ui.alert(f"experiment '{row[0]['name']}' ended - new measurements are no longer "
                     f"assigned to it (FR-04)", "green"), 1
@@ -1578,7 +1612,7 @@ def active_experiment(device):
 
 def experiment_device(exp_id):
     """The device id of an experiment - an FR-05 row ends it by device (FR-04). The id and not the
-    name: two brokers may carry an iSpindel with the same name (FR-15)."""
+    name: two brokers may carry an iSpindel with the same name (FR-07)."""
     rows = query("""SELECT d.id FROM experiment e JOIN device d ON d.id = e.device_id
                     WHERE e.id = %s""", (exp_id,))
     return rows[0]["id"] if rows else None
@@ -1670,7 +1704,8 @@ def delete_experiment(exp_id):
               State({"type": "setup-btn", "device": ALL, "slot": ALL}, "id"),
               State({"type": "end-btn", "device": ALL, "slot": ALL}, "id"),
               State({"type": "row-btn", "exp": ALL, "mode": ALL}, "id"),
-              State("range", "value"),                       # FR-22: the export time range
+              State("range", "data"),                        # FR-22: the export time range
+              State("relative", "value"),                    # FR-22: which range pair applies
               # FR-12: the fields of the device dialog (the same modal, a different form)
               State("dev-name", "value"), State("dev-active", "value"),
               State({"type": "dev-btn", "device": ALL, "mode": ALL}, "id"),
@@ -1678,7 +1713,7 @@ def delete_experiment(exp_id):
 def experiment_action(setup_clicks, end_clicks, row_clicks, dev_clicks,
                       _, __, target, name, start,
                       style, og, yeast, responsible, notes, reload_data, setup_ids, end_ids,
-                      row_ids, range_key, dev_name, dev_active, dev_ids):
+                      row_ids, rng, axis, dev_name, dev_active, dev_ids):
     """One callback for everything that writes `exp-modal.opened` (Dash allows one callback per
     output): open the dialog, create, edit, delete, cancel, end, plus the csv row action (FR-21;
     the chart action is swallowed here and handled by `toggle_chart`, FR-17). `exp-target` holds
@@ -1771,7 +1806,7 @@ def experiment_action(setup_clicks, end_clicks, row_clicks, dev_clicks,
             return nothing()
         if triggered.get("mode") == "csv":
             # FR-21/FR-22: export this experiment over the selected time range
-            data, alert = download_csv([triggered.get("exp")], range_key)
+            data, alert = download_csv([triggered.get("exp")], axis, rng)
             return exported(alert, data)
         if triggered.get("mode") == "end":
             # FR-04: the same confirmation popup as the card's red button (device looked up here)
@@ -1822,7 +1857,7 @@ def experiment_action(setup_clicks, end_clicks, row_clicks, dev_clicks,
     return nothing()
 
 
-# FR-15: the broker dialog. One callback for everything that writes `broker-modal.opened` (Dash
+# FR-07: the broker dialog. One callback for everything that writes `broker-modal.opened` (Dash
 # allows one callback per output): open, add, edit, delete, pause/resume, close. The list has a
 # callback of its own below, so a refresh never resets the form the user is typing in.
 @app.callback(Output("broker-target", "data"), Output("broker-modal", "opened"),
@@ -1841,7 +1876,7 @@ def experiment_action(setup_clicks, end_clicks, row_clicks, dev_clicks,
               prevent_initial_call=True)
 def broker_action(open_clicks, add_clicks, _, submit_clicks, row_clicks, target, reload_data,
                   label, host, port, prefix, user, password, enabled, row_ids):
-    """One callback for the whole FR-15 dialog: open it, add a broker, edit, delete, pause/resume.
+    """One callback for the whole FR-07 dialog: open it, add a broker, edit, delete, pause/resume.
 
     `broker-target` holds the open job ({"mode": create|edit|delete, "id": <broker id or None>}).
     Validation errors stay inside the dialog (`broker-msg`); a write returns to the list and bumps
@@ -1882,7 +1917,7 @@ def broker_action(open_clicks, add_clicks, _, submit_clicks, row_clicks, target,
             alert, delta = save_broker(broker_id if mode == "edit" else None, label, host, port,
                                        prefix, user, password, enabled)
         else:
-            alert, delta = ui.alert("pick a broker to edit, or add one (FR-15)", "amber"), 0
+            alert, delta = ui.alert("pick a broker to edit, or add one (FR-07)", "amber"), 0
         if delta:
             return listing(alert, delta)              # written -> list, the dialog stays open
         return shape(opened_=True, message=alert)     # keep the form with the reason inside
@@ -1921,7 +1956,7 @@ def broker_action(open_clicks, add_clicks, _, submit_clicks, row_clicks, target,
               Input("tick", "n_intervals"), Input("broker-reload", "data"),
               Input("broker-modal", "opened"))
 def update_broker_list(_, __, opened):
-    """The FR-15 list inside the dialog. It re-reads while the dialog is open, so the state the
+    """The FR-07 list inside the dialog. It re-reads while the dialog is open, so the state the
     ingest writes back (connected / delivering / error) follows without closing the dialog."""
     if not opened:
         return dash.no_update
@@ -1931,7 +1966,7 @@ def update_broker_list(_, __, opened):
 @app.callback(Output("broker-inline", "children"),
               Input("tick", "n_intervals"), Input("broker-reload", "data"))
 def update_broker_inline(_, __):
-    """The FR-15 broker list in the Devices tab (read-only - the dialog does the editing).
+    """The FR-07 broker list in the Devices tab (read-only - the dialog does the editing).
 
     Always rendered, unlike the dialog's copy: a broker that is configured but not delivering, or
     one the broker refuses (`not connected: ... Not authorized`), must be visible right where the
@@ -1940,56 +1975,137 @@ def update_broker_inline(_, __):
     return broker_table(broker_rows(), with_actions=False)
 
 
-def chart_window(range_key):
-    """FR-16: the selected time range as the (start, end) the chart's x axis spans, or None for
-    "entire experiment". The window comes from the database clock (the same `now()` as
-    `RANGE_FILTER`), so the axis cannot disagree with the data. Pinning the axis keeps the empty
-    days before an experiment's first measurement visible instead of cropping them away."""
-    interval = RANGES.get(range_key)
-    if interval is None:
+# FR-16: the range control of the chart card. The `range` store holds both pairs the clientside
+# callback packs - `{"abs": [from, to], "rel": [h_from, h_to]}` - and an empty end means "no bound",
+# i.e. the whole experiment. `tools/check_requirements.py` calls the callbacks with the old preset
+# names, so those are still accepted and mean the absolute window they always meant.
+LEGACY_RANGE_HOURS = {"24h": 24, "7d": 24 * 7}
+
+
+def picker_dt(value):
+    """A date+time picker value ("2026-11-12T16:30") -> an aware datetime, or None.
+
+    `None`/empty means "no bound". Timestamps are stored in UTC and the pickers show local time
+    (NFR-09), so a value is read as local and converted - the rule the start field of
+    `create_experiment` follows. An unparsable value is treated as empty, never as a crash.
+    """
+    if value in (None, ""):
         return None
-    row = query("SELECT now() - %(span)s::interval AS start_ts, now() AS end_ts",
-                {"span": interval})[0]
-    return row["start_ts"], row["end_ts"]
+    try:
+        return datetime.fromisoformat(str(value).strip()).astimezone()
+    except ValueError:
+        return None
 
 
-def series_choice(value):
-    """The `chart-series` checklist -> the `series_pick` the figure understands.
+def absolute_bounds(rng):
+    """The absolute range as (from, to) aware datetimes; either end may be None."""
+    if isinstance(rng, str):                       # legacy preset: "all" / "7d" / "24h"
+        hours = LEGACY_RANGE_HOURS.get(rng)
+        if not hours:
+            return None, None
+        end = datetime.now(timezone.utc)
+        return end - timedelta(hours=hours), end
+    start, end = ((rng or {}).get("abs") or [None, None])[:2]
+    return picker_dt(start), picker_dt(end)
 
-    The control is two checkboxes now; `[]` means "draw neither" (`"none"`). A plain string is
-    still accepted because `tools/check_requirements.py` calls `update_chart` directly.
+
+def relative_hours(rng):
+    """The relative range as (from, to) hours since each experiment's start; either may be None.
+
+    A legacy preset string ("all" / "7d" / "24h") is an *absolute* window and means nothing in this
+    mode, so it reads as "no bound" - `tools/check_requirements.py` still passes those names.
+    """
+    if not isinstance(rng, dict):
+        return None, None
+    start, end = (rng.get("rel") or [None, None])[:2]
+    number = lambda v: None if v in (None, "") else float(v)     # noqa: E731 - a one-line cast
+    return number(start), number(end)
+
+
+def range_clause(axis, rng):
+    """The WHERE fragment and params that narrow a query to the selected range.
+
+    The query must expose the measurement as `m` and - in the relative mode - the experiment as `e`,
+    because "hours since start" is counted from each experiment's own `started_at` (FR-16/FR-18).
+    """
+    if axis == "rel":
+        h_from, h_to = relative_hours(rng)
+        return ("""AND (%(h_from)s::numeric IS NULL OR
+                        m.recorded_at >= e.started_at + %(h_from)s::numeric * interval '1 hour')
+                   AND (%(h_to)s::numeric IS NULL OR
+                        m.recorded_at <= e.started_at + %(h_to)s::numeric * interval '1 hour')""",
+                {"h_from": h_from, "h_to": h_to})
+    start, end = absolute_bounds(rng)
+    return ("""AND (%(r_from)s::timestamptz IS NULL OR m.recorded_at >= %(r_from)s::timestamptz)
+               AND (%(r_to)s::timestamptz IS NULL OR m.recorded_at <= %(r_to)s::timestamptz)""",
+            {"r_from": start, "r_to": end})
+
+
+def range_label(axis, rng):
+    """A short description of the current range, for the CSV toast."""
+    if axis == "rel":
+        h_from, h_to = relative_hours(rng)
+        if h_from is None and h_to is None:
+            return "entire experiment"
+        return (f"{h_from if h_from is not None else 0}-"
+                f"{h_to if h_to is not None else 'end'} h since start")
+    start, end = absolute_bounds(rng)
+    if start is None and end is None:
+        return "entire experiment"
+
+    def show(ts):
+        return "start" if ts is None else f"{local(ts):%d.%m. %H:%M}"
+
+    return f"{show(start)} - {show(end)}"
+
+
+def chart_window(axis, rng):
+    """FR-16: the (start, end) the chart's x axis is pinned to, or None to let Plotly autoscale.
+
+    Only the absolute mode pins the axis, and only when both ends are set: the relative axis counts
+    hours since the start of each experiment and has to begin at 0 (FR-18). Pinning keeps the empty
+    time before an experiment's first measurement visible instead of cropping it away.
+    """
+    if axis == "rel":
+        return None
+    start, end = absolute_bounds(rng)
+    return (start, end) if start and end else None
+
+
+def metric_choice(value):
+    """The `chart-series` checklist -> the `charts.METRICS` keys to draw, in table order.
+
+    The control is one checkbox per data point, so any combination is possible; `[]` draws nothing.
+    A plain string is still accepted because `tools/check_requirements.py` calls `update_chart`
+    directly.
     """
     if isinstance(value, str):
-        return value or "both"
-    chosen = set(value or [])
-    if chosen == {"gravity", "temperature"}:
-        return "both"
-    if chosen == {"gravity"}:
-        return "gravity"
-    if chosen == {"temperature"}:
-        return "temperature"
-    return "none"
+        return {"both": ["gravity", "temperature"], "gravity": ["gravity"],
+                "temperature": ["temperature"]}.get(value, [])
+    return [key for key in charts.METRICS if key in set(value or [])]
 
 
 @app.callback(Output("chart", "figure"),
               Input("tick", "n_intervals"), Input("chart-select", "data"),
-              Input("relative", "value"), Input("range", "value"), Input("viewport", "data"),
+              Input("relative", "value"), Input("range", "data"), Input("viewport", "data"),
               Input("chart-series", "value"))
-def update_chart(_, ids, axis, range_key, viewport, series):
+def update_chart(_, ids, axis, rng, viewport, series):
     # FR-17: `ids` are the experiments toggled on in the FR-05 table (`chart-select`).
     mobile = (viewport or {}).get("mobile", False)   # FR-14/NFR-06: drop legend/titles on a phone
-    series_pick = series_choice(series)
+    metrics = metric_choice(series)
     if not ids:
-        return charts.fermentation_figure([], mobile=mobile, series_pick=series_pick)
-    rows = query("""SELECT e.id, e.name, m.recorded_at,
-                           m.gravity_plato::float8 AS gravity_plato,
+        return charts.fermentation_figure([], mobile=mobile, metrics=metrics)
+    clause, rparams = range_clause(axis, rng)
+    rows = query("""SELECT e.id, e.name, m.recorded_at, m.interval_s,
+                           m.tilt_deg::float8 AS tilt_deg, m.battery_v::float8 AS battery_v,
+                           m.rssi_dbm, m.gravity_plato::float8 AS gravity_plato,
                            m.temp_c::float8 AS temp_c
                     FROM experiment e
                     JOIN measurement m ON m.experiment_id = e.id
                     WHERE e.id = ANY(%(ids)s)
-                    """ + RANGE_FILTER + """
+                    """ + clause + """
                     ORDER BY e.id, m.recorded_at""",
-                 {"ids": list(ids), "since": RANGES.get(range_key)})
+                 {"ids": list(ids), **rparams})
     series, by_id = [], {}
     for row in rows:
         entry = by_id.get(row["id"])
@@ -2000,17 +2116,17 @@ def update_chart(_, ids, axis, range_key, viewport, series):
         entry["points"].append(row)
     # FR-16: `chart_window` pins the x axis to the whole range (FR-18 uses hours since start)
     return charts.fermentation_figure(series, relative=(axis == "rel"), mobile=mobile,
-                                      x_range=chart_window(range_key),
-                                      series_pick=series_pick)
+                                      x_range=chart_window(axis, rng), metrics=metrics)
 
 
-def download_csv(ids, range_key):
+def download_csv(ids, axis, rng):
     """FR-21/FR-22: CSV of the experiment(s) in `ids`, optionally over the selected time range.
     Returns `(download, alert)` - the `dcc.send_string` payload (or `no_update`) and a message.
     A plain function (called by `experiment_action`) so the test scripts can call it directly."""
     if not ids:
         return dash.no_update, ui.alert(
             "pick at least one experiment, then export it again (FR-21)", "amber")
+    clause, rparams = range_clause(axis, rng)
     rows = query("""SELECT e.name AS experiment, d.mqtt_name AS ispindel,
                            to_char(m.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') || 'Z'
                                AS timestamp_utc,
@@ -2025,31 +2141,33 @@ def download_csv(ids, range_key):
                     JOIN experiment e ON e.id = m.experiment_id
                     JOIN device d ON d.id = m.device_id
                     WHERE m.experiment_id = ANY(%(ids)s)
-                    """ + RANGE_FILTER + """
+                    """ + clause + """
                     ORDER BY e.name, m.recorded_at""",
-                 {"tz": str(LOCAL), "ids": list(ids), "since": RANGES.get(range_key)})
+                 {"tz": str(LOCAL), "ids": list(ids), **rparams})
     if not rows:
         return dash.no_update, ui.alert("no measurements in the selected range", "amber")
     filename = f"{rows[0]['experiment']}.csv" if len(ids) == 1 else "experiments.csv"
     return (dcc.send_string(rows_to_csv(rows), filename),
-            ui.alert(f"exported {len(rows)} measurements ({RANGE_LONG.get(range_key)}), "
+            ui.alert(f"exported {len(rows)} measurements ({range_label(axis, rng)}), "
                      f"file: {filename}", "green"))
 
 
 # FR-22: several experiments and/or a time range in one file. The experiments are the ones
-# overlaid in the comparison chart (FR-17, `chart-select`), the range is the FR-16 radio. This
-# is a callback of its own so the FR-21 row export stays untouched; `allow_duplicate` lets it
-# write the shared page toast (`msg`) and it has its own download target (`download-multi`).
+# overlaid in the comparison chart (FR-17, `chart-select`), the range is the FR-16 control under
+# the chart. This is a callback of its own so the FR-21 row export stays untouched;
+# `allow_duplicate` lets it write the shared page toast (`msg`) and it has its own download
+# target (`download-multi`).
 @app.callback(Output("download-multi", "data"),
               Output("msg", "children", allow_duplicate=True),
               Input("export-selected", "n_clicks"),
-              State("chart-select", "data"), State("range", "value"),
+              State("chart-select", "data"), State("range", "data"),
+              State("relative", "value"),
               prevent_initial_call=True)
-def export_selected(_, ids, range_key):
+def export_selected(_, ids, rng, axis):
     """FR-22: export every experiment overlaid in the comparison chart as one CSV."""
     if not _:
         return dash.no_update, dash.no_update
-    data, alert = download_csv(ids, range_key)
+    data, alert = download_csv(ids, axis, rng)
     return data, ui.toast(alert)
 
 

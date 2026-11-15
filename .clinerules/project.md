@@ -17,10 +17,9 @@ historical data. The whole system runs as a Podman/Docker Compose stack (README 
 ## Rules that are not negotiable
 
 1. **`config.yml` is the only place for settings (NFR-08).** Never hard-code a host, port, DSN,
-   threshold or time zone in the code. Environment variables (`ISPINDEL_DB_DSN`,
-   `ISPINDEL_MQTT_HOST`, `ISPINDEL_MQTT_PORT`, `ISPINDEL_MQTT_CLIENT_ID`) may only *override* a
-   single value so the same file works inside the container network and on a bare host - they are
-   not a second configuration.
+   threshold or time zone in the code. The values are the ones the compose stack uses (`db`,
+   `broker`); a run outside the stack points `ISPINDEL_CONFIG` at its own copy of the file - that is
+   the only configuration mechanism.
 2. **`config.yml` contains no machine-specific value.** The stack is the same on every machine;
    there is no per-host config copy and no `sed` rewrite. A clone runs as it is.
 3. **Reference the requirement in the comment next to the code** (`FR-11`, `NFR-09`, ...). The

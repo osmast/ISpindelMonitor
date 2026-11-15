@@ -172,8 +172,10 @@ def post(setup_id, end_id, changed, clicks, states, row_id=ROW_ID, dev_id=DEV_ID
         "state": states + [{"id": setup_id, "property": "id", "value": setup_id},
                            {"id": end_id, "property": "id", "value": end_id},
                            {"id": row_id, "property": "id", "value": row_id},
-                           # FR-22: the time range for the CSV row action
-                           {"id": "range", "property": "value", "value": "all"},
+                           # FR-22: the time range for the CSV row action (both pairs of the store)
+                           {"id": "range", "property": "data",
+                            "value": {"abs": [None, None], "rel": [None, None]}},
+                           {"id": "relative", "property": "value", "value": "abs"},
                            # FR-12: the fields of the device dialog + the settings-icon id
                            {"id": "dev-name", "property": "value", "value": dev_name},
                            {"id": "dev-active", "property": "value",
@@ -221,7 +223,7 @@ setup_id = find_button_id(DEV, "setup-btn")
 check("the card renders a setup button whose id matches the callback pattern exactly",
       setup_id is not None and sorted(setup_id.keys()) == ["device", "slot", "type"],
       str(setup_id))
-check("the setup button carries the device id (FR-15: the name repeats across brokers)",
+check("the setup button carries the device id (FR-07: the name repeats across brokers)",
       setup_id and setup_id.get("device") == DEV,
       str(setup_id))
 setup_card = card_text(NAME)
@@ -598,7 +600,7 @@ check("the dialog cannot close itself out of sync (no X / outside / Esc)",
 # them up when it wires a callback and otherwise logs "ID not found in layout" and never sends a
 # request - the callback is dead in the browser. Nothing server-side can see that (this file posts
 # to /_dash-update-component by hand and check_requirements.py calls the functions directly), so the
-# trap needs its own test. It bit the FR-15 broker dialog: its form lived in an empty hidden div,
+# trap needs its own test. It bit the FR-07 broker dialog: its form lived in an empty hidden div,
 # exactly what the device form of FR-12 documents - forms belong in the static layout.
 def layout_ids(root):
     """Every string id the initial layout renders.

@@ -13,9 +13,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 CFG = yaml.safe_load(Path(os.environ.get("ISPINDEL_CONFIG", ROOT / "config.yml")).read_text())
-# like the ingest: ISPINDEL_MQTT_HOST is the only override (compose sets it to `broker`)
 MQTT = CFG["mqtt"]
-MQTT["host"] = os.environ.get("ISPINDEL_MQTT_HOST", MQTT["host"])
 
 
 def sg_from_plato(plato):

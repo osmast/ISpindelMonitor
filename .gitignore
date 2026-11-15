@@ -5,9 +5,9 @@ __pycache__/
 tailwindcss
 node_modules/
 data/
+presentation/
 memory-bank/
 docs/
-package*.json
 deploy/backups/
 config.local.yml
 .env

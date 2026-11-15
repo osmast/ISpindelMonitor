@@ -1,6 +1,6 @@
 # The app stack: database, broker and dashboard (three containers) plus two optional services that
 # only start with a profile - `ingest` (records a real iSpindel, `--profile ingest`) and `seed`
-# (mock data, `--profile demo`).
+# (loads the recorded batches from seed/, `--profile seed`).
 #
 #   podman compose up -d --build     (or `docker compose ...`) -> http://localhost:8080
 #
@@ -52,7 +52,7 @@ services:
   # One MQTT transmission = 7 messages -> exactly one measurement row (FR-11).
   #
   # This service is NOT part of what a plain `up` starts (profile `ingest`): the dashboard, the
-  # demo data and every UI/self-test run without it - only a real iSpindel needs it. It stays
+  # seeded data and every UI/self-test run without it - only a real iSpindel needs it. It stays
   # defined here instead of in a raw `docker run` README line so that the DSN, the network and the
   # mounts live in this one file (NFR-08).
   #   <engine> compose --profile ingest up -d ingest      -> record the iSpindel, stays running
@@ -72,10 +72,7 @@ services:
       broker:
         condition: service_healthy
     environment:
-      # Inside the container network the services are `db` and `broker` (NFR-08).
-      ISPINDEL_DB_DSN: postgresql://ispindel:ispindel@db:5432/ispindel
-      ISPINDEL_MQTT_HOST: broker
-      ISPINDEL_MQTT_CLIENT_ID: ispindel-ingest
+      # NFR-08: no settings here - the addresses live in config.yml (`db`, `broker`).
       TZ: UTC
     volumes:
       # the source is mounted so an edit only needs a container restart, not a rebuild
@@ -100,7 +97,6 @@ services:
       db:
         condition: service_healthy
     environment:
-      ISPINDEL_DB_DSN: postgresql://ispindel:ispindel@db:5432/ispindel
       TZ: UTC
     ports:
       - "${ISPINDEL_HTTP_PORT:-8080}:8080"      # NFR-02: the LAN opens <host>:8080
@@ -111,16 +107,17 @@ services:
       - ./components:/repo/components
       - ./assets:/repo/assets
       - ./tools:/repo/tools:ro
+      - ./seed:/repo/seed:ro
 
-  # Optional demo data: `--profile demo` also starts this one-shot service, which seeds the
-  # simulated fleet once the database is ready and then exits. Without the profile the stack
-  # stays empty.
-  #   <engine> compose --profile demo up -d --build        -> the app shows the mock data
-  #   <engine> compose exec -T dashboard python tools/simulate.py --delete   -> remove it again
+  # Optional seed data: `--profile seed` also starts this one-shot service, which loads the four
+  # batches recorded during the fermentation phase (`seed/*.csv`) once the database is ready and
+  # then exits. Without the profile the stack stays **empty** on purpose.
+  #   <engine> compose --profile seed up -d --build            -> the app shows the recorded batches
+  #   <engine> compose exec -T dashboard python tools/seed.py  -> the same on a running stack
   seed:
     image: ispindel-monitor:latest
     build: .
-    profiles: ["demo"]
+    profiles: ["seed"]
     restart: "no"
     # wait for the schema as well: on a fresh volume `pg_isready` can answer while
     # /docker-entrypoint-initdb.d/schema.sql is still running, and the seed must not race it
@@ -132,17 +129,17 @@ services:
           echo "waiting for the database schema ..."
           sleep 2
         done
-        exec python tools/simulate.py --demo --until-now
+        exec python tools/seed.py
     depends_on:
       db:
         condition: service_healthy
     environment:
-      ISPINDEL_DB_DSN: postgresql://ispindel:ispindel@db:5432/ispindel
       TZ: UTC
     volumes:
       - ./config.yml:/repo/config.yml:ro
       - ./services:/repo/services:ro
       - ./tools:/repo/tools:ro
+      - ./seed:/repo/seed:ro
 
 volumes:
   pgdata:                           # NFR-04: the measurements live here

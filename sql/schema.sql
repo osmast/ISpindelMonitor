@@ -5,7 +5,7 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;   -- required by the exclusion constr
 
 -- ---------- master data ----------------------------------------------------
 
--- FR-15: during the fermentation phase several iSpindels are in use, and each participant runs
+-- FR-07: during the fermentation phase several iSpindels are in use, and each participant runs
 -- *their own* broker - so the ingest is pointed at more than one broker. The **own** broker stays
 -- where it always was, in `config.yml` (NFR-08) and is deliberately **not** a row here; the devices
 -- of that broker carry `device.broker_id = NULL`. This table holds the brokers added at runtime
@@ -21,7 +21,7 @@ CREATE TABLE mqtt_broker (
     is_enabled    boolean NOT NULL DEFAULT true,      -- off = the ingest ignores this broker
     created_at    timestamptz NOT NULL DEFAULT now(),
     -- the ingest writes these three back so the dialog can show whether the broker is reachable
-    -- and delivering (FR-15: "all iSpindels in use are visible at the same time")
+    -- and delivering (FR-07: a configured broker that is silent must not look like it delivers)
     last_connected_at timestamptz,
     last_message_at   timestamptz,
     last_error        text
@@ -104,7 +104,7 @@ SELECT DISTINCT ON (d.id)
        m.gravity_plato::float8 AS gravity_plato,
        m.battery_v::float8     AS battery_v,
        m.interval_s, m.rssi_dbm,
-       -- appended 29.10.2026 (FR-15): which broker this iSpindel publishes to; NULL = config.yml
+       -- appended 29.10.2026 (FR-07): which broker this iSpindel publishes to; NULL = config.yml
        d.broker_id AS broker_id, b.label AS broker_label
 FROM device d
 LEFT JOIN mqtt_broker b ON b.id = d.broker_id
@@ -119,7 +119,7 @@ SELECT e.id, e.name, d.mqtt_name AS ispindel, e.started_at, e.ended_at,
        -- FR-01/FR-05: the optional experiment fields (appended, so that an existing database
        -- can be updated with CREATE OR REPLACE VIEW - see the migration note below)
        e.beer_style, e.og_plato, e.yeast, e.responsible, e.notes,
-       -- appended 29.10.2026 (FR-15): the broker of the experiment's iSpindel; NULL = config.yml
+       -- appended 29.10.2026 (FR-07): the broker of the experiment's iSpindel; NULL = config.yml
        d.broker_id AS broker_id, b.label AS broker_label
 FROM experiment e
 JOIN device d ON d.id = e.device_id

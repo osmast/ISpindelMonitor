@@ -2,7 +2,7 @@
 # (see compose.yaml). `config.yml` is not baked in: compose mounts it read-only (NFR-08).
 # There is no .dockerignore: this COPY list is the filter, so docs/, node_modules/ and the
 # deploy files never reach the image. **Every file under assets/ that the browser loads has to be
-# listed here** (the beer tab icon, the glass cursor images, the cursor and bubble scripts) - a file
+# listed here** (the beer tab icon, the glass cursor images, the bubble and state scripts) - a file
 # that is only committed is served by a host-side run and 404s in the container. `input.pcss` stays
 # out on purpose: it is the Tailwind source, not something the browser may fetch.
 # Fully qualified image name (docker.io/library/...), so a Podman host never needs a short-name
@@ -22,8 +22,8 @@ COPY main.py ./
 COPY components/ components/
 COPY services/ services/
 COPY tools/ tools/
-COPY assets/tailwind.css assets/zz-cursor.css assets/zz-radio.css assets/
-COPY assets/card_state.js assets/bubbles.js assets/cursor.js assets/build_check.js assets/
+COPY assets/tailwind.css assets/zz-radio.css assets/
+COPY assets/card_state.js assets/bubbles.js assets/build_check.js assets/
 COPY assets/favicon-beer.svg assets/cursor-beer.svg assets/cursor-beer.png assets/
 COPY assets/fonts/ assets/fonts/
 

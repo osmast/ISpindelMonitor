@@ -6,12 +6,14 @@ It talks to the database from config.yml only. Everything it creates is named ``
 and deleted again before it exits; the script exits non-zero if any check fails.
 """
 import json
+import importlib.util
 import sys
 import time
-from datetime import timezone
+from datetime import timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
 import main                                                        # noqa: E402
 
 ok = True
@@ -49,7 +51,7 @@ COUNT_EXP_OUTSIDE_24H = """SELECT count(*) AS n FROM measurement m
 
 # start from a clean slate so a re-run behaves like the first one. Only rows this script
 # created are removed: a blunt "WHERE recorded_at < now() - interval '1 day'" would also wipe
-# the long simulations seeded by tools/simulate.py. Measurements first - the FK has no cascade.
+# the recorded batches loaded by tools/seed.py. Measurements first - the FK has no cascade.
 main.execute("""DELETE FROM measurement WHERE experiment_id IN
                   (SELECT id FROM experiment WHERE name LIKE %(pat)s)
                 OR device_id IN (SELECT id FROM device WHERE mqtt_name LIKE %(pat)s)""",
@@ -62,8 +64,8 @@ main.execute("DELETE FROM mqtt_broker WHERE label LIKE %(pat)s", {"pat": "zz_val
 # ---- FR-12 / FR-13 / FR-15: the overview renders one card per active device ----
 overview = main.ispindel_overview({})
 # one card per **active** row of v_device_latest, no repeats - that is what FR-13/FR-15 ask for
-# (the count is not hard-coded: a simulated device from tools/simulate.py is a device like any
-# other, and one switched to "ignored" in the Devices table leaves the overview)
+# (the count is not hard-coded: a device loaded from seed/ is a device like any other, and one
+# switched to "ignored" in the Devices table leaves the overview)
 devices = main.query("""SELECT count(*) AS n FROM v_device_latest l
                         JOIN device d ON d.id = l.device_id
                         WHERE d.is_active""")[0]["n"]
@@ -100,16 +102,16 @@ check("FR-12 deleting an iSpindel removes it and the measurements it recorded",
       "device + its rows are gone")
 
 
-# ---- FR-15: the own broker from config.yml plus the brokers added in the dialog -----------
+# ---- FR-07: the own broker from config.yml plus the brokers added in the dialog -----------
 # The own broker is never a row of `mqtt_broker` (NFR-08: it lives in config.yml), so the dialog
 # renders it as the read-only first row. Everything else is added at runtime - the phase where the
 # other participants' iSpindels publish to *their* brokers is exactly this case.
 brokers = main.broker_rows()
-check("FR-15 the broker list starts with the own broker from config.yml (read-only)",
+check("FR-07 the broker list starts with the own broker from config.yml (read-only)",
       brokers and brokers[0]["is_config"] and brokers[0]["host"] == main.CFG["mqtt"]["host"]
       and brokers[0]["port"] == main.CFG["mqtt"]["port"], str(brokers[:1]))
 broker_dump = json.dumps(main.broker_table(brokers).to_plotly_json(), default=str)
-check("FR-15 the list names address, topic prefix and state of every broker",
+check("FR-07 the list names address, topic prefix and state of every broker",
       f"{main.CFG['mqtt']['host']}:{main.CFG['mqtt']['port']}" in broker_dump
       and main.CFG["mqtt"]["topic_prefix"] in broker_dump and "config.yml" in broker_dump
       and main.BROKER_HEADERS == ["Broker", "Address", "Topic prefix", "iSpindels", "State",
@@ -120,9 +122,9 @@ check("FR-15 the list names address, topic prefix and state of every broker",
 # was stored for its iSpindels - the trap that made it read "no message yet" while it was delivering
 own_state = json.dumps(main.broker_state(brokers[0]).to_plotly_json(), default=str)
 if brokers[0].get("last_stored"):
-    check("FR-15 the own broker shows a state derived from its newest stored measurement",
+    check("FR-07 the own broker shows a state derived from its newest stored measurement",
           "delivering" in own_state or "silent since" in own_state, own_state[:70])
-    check("FR-15 the broker state never counts a negative age (a clock ahead of the data)",
+    check("FR-07 the broker state never counts a negative age (a clock ahead of the data)",
           "(-" not in own_state, own_state[:70])
 else:
     print("INFO  the own broker has no measurement yet - its chip stays at 'no data yet'")
@@ -132,43 +134,43 @@ alert, delta = main.save_broker(None, "zz_validation_broker", "127.0.0.1", 1884,
 stored = main.query("SELECT id, label, host, port, is_enabled FROM mqtt_broker WHERE label = %s",
                     ("zz_validation_broker",))
 broker_id = stored[0]["id"] if stored else None
-check("FR-15 a broker added in the dialog is stored and enabled",
+check("FR-07 a broker added in the dialog is stored and enabled",
       bool(delta) and stored and stored[0]["port"] == 1884 and stored[0]["is_enabled"],
       str(stored))
 added_row = [r for r in main.broker_rows() if r["label"] == "zz_validation_broker"][0]
-check("FR-15 a broker without data says so instead of pretending to deliver",
+check("FR-07 a broker without data says so instead of pretending to deliver",
       added_row["last_stored"] is None and added_row["last_message_at"] is None
       and "no data yet" in json.dumps(main.broker_state(added_row).to_plotly_json(), default=str),
       str({k: added_row[k] for k in ("label", "last_stored", "last_connected_at")}))
-check("FR-15 a second broker with the same label is refused",
+check("FR-07 a second broker with the same label is refused",
       main.save_broker(None, "zz_validation_broker", "127.0.0.1", 1885, "ispindel", "", "",
                        ["on"])[1] == 0)
-check("FR-15 a broker without a host is refused",
+check("FR-07 a broker without a host is refused",
       main.save_broker(None, "zz_validation_nohost", "", 1883, "ispindel", "", "", ["on"])[1] == 0)
 # an address pasted into the host field ("160.85.124.31:1883") must not become a host name
 main.save_broker(None, "zz_validation_addr", "127.0.0.1:1885", 1883, "ispindel", "", "", ["on"])
 addr_row = main.query("SELECT host, port FROM mqtt_broker WHERE label = 'zz_validation_addr'")
-check("FR-15 an address pasted into the host field is split into host and port",
+check("FR-07 an address pasted into the host field is split into host and port",
       addr_row and addr_row[0]["host"] == "127.0.0.1" and addr_row[0]["port"] == 1885, str(addr_row))
 main.execute("DELETE FROM mqtt_broker WHERE label = 'zz_validation_addr'")
 
 # a connection the broker refuses ("Not authorized": it wants a user/password) must be readable
 refused = dict(main.broker_rows()[0], last_error="connect failed: Not authorized - retrying")
 refused_chip = json.dumps(main.broker_state(refused).to_plotly_json(), default=str)
-check("FR-15 a refused connection is shown as an error with its reason",
+check("FR-07 a refused connection is shown as an error with its reason",
       "children='Not authorized'" in refused_chip                        # the chip itself
       and "connect failed: Not authorized - retrying" in refused_chip,   # the tooltip keeps it all
       refused_chip[:90])
 watchdog = dict(main.broker_rows()[0], last_error="not connected after 60 s - is the broker reachable?")
 watchdog_chip = json.dumps(main.broker_state(watchdog).to_plotly_json(), default=str)
-check("FR-15 the state chip does not repeat 'not connected'",
+check("FR-07 the state chip does not repeat 'not connected'",
       "children='not connected after 60 s" in watchdog_chip, watchdog_chip[:90])
 
 # the ingest reads that very list while it runs (services/mqtt_service.py)
 import services.mqtt_service as ingest                                      # noqa: E402
 specs = ingest.broker_specs()
 enabled = main.query("SELECT count(*) AS n FROM mqtt_broker WHERE is_enabled")[0]["n"]
-check("FR-15 the ingest listens on the own broker plus every enabled one",
+check("FR-07 the ingest listens on the own broker plus every enabled one",
       len(specs) == 1 + enabled and any(spec.get("port") == 1884 for spec in specs),
       f"{len(specs)} listener(s): " + ", ".join(f"{s['host']}:{s['port']}" for s in specs))
 
@@ -179,10 +181,10 @@ refused_link = ingest.BrokerLink({"id": broker_id, "label": "zz_validation_broke
 refused_link.last_error = "connect failed: Not authorized - retrying"
 ingest.broker_status(refused_link, touched=0, error=refused_link.last_error)
 kept = main.query("SELECT last_error FROM mqtt_broker WHERE id = %s", (broker_id,))[0]["last_error"]
-check("FR-15 a connection error survives the periodic traffic report on the broker row",
+check("FR-07 a connection error survives the periodic traffic report on the broker row",
       kept == "connect failed: Not authorized - retrying", str(kept))
 refused_row = [r for r in main.broker_rows() if r["id"] == broker_id][0]
-check("FR-15 a refused broker shows the reason instead of 'no data yet'",
+check("FR-07 a refused broker shows the reason instead of 'no data yet'",
       "Not authorized" in json.dumps(main.broker_state(refused_row).to_plotly_json(), default=str),
       str(refused_row["last_error"]))
 
@@ -196,9 +198,9 @@ class SilentLink:                       # a listener that has been trying for tw
 
 
 reach_error = ingest.link_error(SilentLink())
-check("FR-15 a broker that never answers is reported as unreachable",
+check("FR-07 a broker that never answers is reported as unreachable",
       reach_error and "reachable" in reach_error, str(reach_error))
-check("FR-15 a listener that just started is not called unreachable yet",
+check("FR-07 a listener that just started is not called unreachable yet",
       ingest.link_error(SilentLink(), grace=600) is None)
 
 
@@ -217,7 +219,7 @@ class RefusedLink:
 
 refused_stub = RefusedLink()
 ingest.on_disconnect(None, refused_stub, None, FailReason())
-check("FR-15 a refused connect keeps its reason instead of the generic disconnect text",
+check("FR-07 a refused connect keeps its reason instead of the generic disconnect text",
       refused_stub.last_error == "connect failed: Not authorized - retrying", refused_stub.last_error)
 
 # a broker can accept the connection and refuse the *subscription* (mosquitto `acl_file`): the ingest
@@ -236,11 +238,11 @@ class GrantedCode:
 
 denied_link = SubLink()
 ingest.on_subscribe(None, denied_link, 1, [GrantedCode(0x80)])
-check("FR-15 a refused subscription is reported (the broker denies reading its topics)",
+check("FR-07 a refused subscription is reported (the broker denies reading its topics)",
       "subscription refused" in (denied_link.last_error or ""), str(denied_link.last_error))
 allowed_link = SubLink()
 ingest.on_subscribe(None, allowed_link, 1, [GrantedCode(0)])
-check("FR-15 a granted subscription leaves the broker healthy",
+check("FR-07 a granted subscription leaves the broker healthy",
       allowed_link.last_error is None, str(allowed_link.last_error))
 
 # the same iSpindel name on another broker is its own device (never merged with the own broker's)
@@ -248,7 +250,7 @@ main.execute("INSERT INTO device (mqtt_name) VALUES ('zz_validation') ON CONFLIC
 main.execute("""INSERT INTO device (broker_id, mqtt_name) VALUES (%(id)s, 'zz_validation')
                 ON CONFLICT DO NOTHING""", {"id": broker_id})
 both = main.query("SELECT id, broker_id FROM device WHERE mqtt_name = 'zz_validation'")
-check("FR-15 the same iSpindel name on another broker is a second device",
+check("FR-07 the same iSpindel name on another broker is a second device",
       len(both) == 2 and len({r["broker_id"] for r in both}) == 2, str(both))
 
 
@@ -259,17 +261,17 @@ class NameLink:
         self.id = broker_id
 
 
-check("FR-15 only the broker that owns a name stores it (bridges create no duplicates)",
+check("FR-07 only the broker that owns a name stores it (bridges create no duplicates)",
       ingest.owns_name(NameLink(None), "zz_validation")
       and not ingest.owns_name(NameLink(broker_id), "zz_validation")
       and ingest.owns_name(NameLink(broker_id), "zz_validation_brandnew"),
       "own broker wins, a new name is free")
 devices_dump = json.dumps(main.device_table(main.device_rows()).to_plotly_json(), default=str)
-check("FR-15 the Devices table names the broker address of every iSpindel",
+check("FR-07 the Devices table names the broker address of every iSpindel",
       "Broker (address)" in main.DEVICE_HEADERS and "127.0.0.1:1884" in devices_dump
       and "zz_validation_broker" in devices_dump,
       "the added broker's address is in the table next to the own broker's")
-check("FR-15 the own broker's address is the one an iSpindel publishes to, not `localhost`",
+check("FR-07 the own broker's address is the one an iSpindel publishes to, not `localhost`",
       "160.85.9.9:1883" in json.dumps(
           main.device_table(main.device_rows(), "160.85.9.9").to_plotly_json(), default=str),
       "host passed by update_dashboard() via broker_host()")
@@ -277,24 +279,24 @@ check("FR-15 the own broker's address is the one an iSpindel publishes to, not `
 # the Devices tab carries the broker list as well (read-only), so a broker that is configured but
 # not delivering or refused by the broker is visible without opening the dialog
 layout_dump = json.dumps(main.app.layout.to_plotly_json(), default=str)
-check("FR-15 the Devices tab shows the broker list next to the devices",
+check("FR-07 the Devices tab shows the broker list next to the devices",
       "broker-inline" in layout_dump and "broker-open" in layout_dump
       and "MQTT brokers" in layout_dump)
 inline_dump = json.dumps(main.broker_table(main.broker_rows(), with_actions=False)
                          .to_plotly_json(), default=str)
-check("FR-15 the inline broker list is read-only (the dialog owns the editing)",
+check("FR-07 the inline broker list is read-only (the dialog owns the editing)",
       "broker-btn" not in inline_dump and "Actions" not in inline_dump, inline_dump[-120:])
 
 alert, delta = main.toggle_broker(broker_id)
-check("FR-15 pausing a broker is stored (the ingest stops listening within one pass)",
+check("FR-07 pausing a broker is stored (the ingest stops listening within one pass)",
       bool(delta) and not main.query("SELECT is_enabled FROM mqtt_broker WHERE id = %s",
                                      (broker_id,))[0]["is_enabled"])
 alert, delta = main.toggle_broker(broker_id)
-check("FR-15 resuming a broker is stored",
+check("FR-07 resuming a broker is stored",
       bool(delta) and main.query("SELECT is_enabled FROM mqtt_broker WHERE id = %s",
                                  (broker_id,))[0]["is_enabled"])
 alert, delta = main.delete_broker(broker_id)
-check("FR-15 deleting a broker takes its iSpindels with it (and nothing of the own broker)",
+check("FR-07 deleting a broker takes its iSpindels with it (and nothing of the own broker)",
       bool(delta) and not main.query("SELECT 1 FROM mqtt_broker WHERE id = %s", (broker_id,))
       and not main.query("SELECT 1 FROM device WHERE broker_id = %s", (broker_id,)),
       "deleted broker + its devices")
@@ -359,9 +361,9 @@ else:
 main.execute("INSERT INTO device (mqtt_name) VALUES ('zz_validation') ON CONFLICT DO NOTHING")
 dev1 = main.query("SELECT id FROM device WHERE mqtt_name = 'zz_validation'")[0]["id"]
 # Which experiment? The one with the **newest measurement**, so that the "24 h" range really has
-# data to show. The first experiment of the database is not a good pick: with the simulated fleet
-# (tools/simulate.py --demo) or any older installation the oldest batch has nothing inside the last
-# 24 h, and a check may not depend on which data happens to be there.
+# data to show. The first experiment of the database is not a good pick: in the seeded data (or any
+# older installation) the oldest batch ended weeks ago, so nothing is inside the last 24 h - and a
+# check may not depend on which data happens to be there.
 newest_exp = main.query("""SELECT m.experiment_id AS id
                            FROM measurement m
                            WHERE m.experiment_id IS NOT NULL
@@ -400,10 +402,11 @@ def chart_points(fig):
 
     A figure without a data series is a legitimate answer (a range that excludes everything), so
     reading `.data[0]` directly would report correct behaviour as a crash. That happened as soon
-    as the oldest experiment of a database was picked for this check - the simulated fleet has
-    batches that ended weeks ago.
+    as the oldest experiment of a database was picked for this check - a seeded or older database
+    has batches that ended weeks ago.
     """
-    return len(fig.data[0].y) if fig.data else 0
+    # a data gap inserts a `None` to break the line - that is not a point, so it is not counted
+    return len([v for v in fig.data[0].y if v is not None]) if fig.data else 0
 
 
 db_all = stable_count(lambda: chart_points(fig_all), COUNT_EXP, {"id": exp_id})
@@ -418,6 +421,12 @@ check("FR-16 range really narrows the chart",
       db_outside[0] <= db_outside[1] <= db_outside[2] and db_outside[1] >= 1,
       f"all={chart_points(fig_all)} 24h={chart_points(fig_24h)} -> "
       f"{db_outside[1]} row(s) outside the window (incl. the synthetic 3-day-old one)")
+
+# the series carries a `None` where a gap is (the synthetic row is 3 days old, far more than the
+# three intervals of FR-19), so the line is broken instead of interpolated over
+gap_y = list(fig_all.data[0].y) if fig_all.data else []
+check("a data gap breaks the line instead of being interpolated",
+      None in gap_y, f"{gap_y.count(None)} break(s) in the series")
 
 # FR-16: a selected range also pins the x axis to its **whole** window, so the empty time before
 # an experiment's first measurement is drawn instead of cropped away. The case that asked for
@@ -437,6 +446,46 @@ check("FR-18 relative axis ignores the selected range",
       main.update_chart(0, [exp_id], "rel", "7d", {}, "both").layout.xaxis.range is None,
       "hours-since-start must start at 0")
 
+# FR-16: the range control under the chart takes a custom **date+time** range in the absolute mode
+# and a **hour** range (hours since each experiment's own start) in the relative one. An empty end
+# means "no bound" - the "entire experiment" the checks above use.
+first = main.query("""SELECT min(recorded_at) AS t FROM measurement
+                      WHERE experiment_id = %(id)s""", {"id": exp_id})[0]["t"]
+day_end = first + timedelta(days=1)
+fig_day = main.update_chart(0, [exp_id], "abs", {"abs": [str(first), str(day_end)]}, {}, "both")
+count_day = main.query("""SELECT count(*) AS n FROM measurement
+                          WHERE experiment_id = %(id)s AND gravity_plato IS NOT NULL
+                            AND recorded_at >= %(a)s AND recorded_at <= %(b)s""",
+                       {"id": exp_id, "a": first, "b": day_end})[0]["n"]
+check("FR-16 a custom date+time range narrows the chart",
+      chart_points(fig_day) == count_day and 0 < count_day < chart_points(fig_all),
+      f"first day {chart_points(fig_day)} of {chart_points(fig_all)} points (db {count_day})")
+fig_hours = main.update_chart(0, [exp_id], "rel", {"rel": [0, 24]}, {}, "both")
+count_hours = main.query("""SELECT count(*) AS n FROM measurement m
+                            JOIN experiment e ON e.id = m.experiment_id
+                            WHERE m.experiment_id = %(id)s AND m.gravity_plato IS NOT NULL
+                              AND m.recorded_at <= e.started_at + interval '24 hours'""",
+                         {"id": exp_id})[0]["n"]
+check("FR-18 a relative hour range narrows the chart",
+      chart_points(fig_hours) == count_hours and 0 < count_hours < chart_points(fig_all),
+      f"first 24 h {chart_points(fig_hours)} of {chart_points(fig_all)} points (db {count_hours})")
+check("an empty range means the whole experiment",
+      chart_points(main.update_chart(0, [exp_id], "abs", None, {}, "both"))
+      == chart_points(fig_all), "no bounds -> every measurement")
+
+# FR-16: the control that does not fit the time axis is hidden, and both range pairs travel in the
+# store the chart and the CSV export read (a server callback, so it is callable here).
+hide_abs, show_rel, rel_store = main.range_controls("rel", None, None, 0, 24)
+show_abs, hide_rel, abs_store = main.range_controls("abs", "2026-11-01T00:00", None, None, None)
+check("FR-16 the range control follows the selected time axis",
+      hide_abs["display"] == "none" and show_rel["display"] == "flex"
+      and show_abs["display"] == "flex" and hide_rel["display"] == "none",
+      f"rel -> {hide_abs} / {show_rel}")
+check("FR-16 both range pairs reach the store",
+      rel_store == {"abs": [None, None], "rel": [0, 24]}
+      and abs_store == {"abs": ["2026-11-01T00:00", None], "rel": [None, None]},
+      f"{rel_store} / {abs_store}")
+
 # The chart draws gravity + temperature by default and can be reduced to one of them (the "Show"
 # radio of the chart card). This is not an FR of the specification - it is the read-out control
 # the batch cards and the comparison chart share; the checks pin the two-trace / one-trace shapes.
@@ -449,6 +498,19 @@ check("the chart 'Show' control can reduce the chart to gravity only or temperat
       fig_gravity.data and all(t.name.endswith("(°P)") for t in fig_gravity.data)
       and fig_temp.data and all(t.name.endswith("(°C)") for t in fig_temp.data),
       f"gravity={[t.name for t in fig_gravity.data]} temp={[t.name for t in fig_temp.data]}")
+
+# every data point the table knows can be drawn: one trace per metric, each on its **own y axis**
+# (the units differ - °P, °C, °, V, s, dBm), and every checkbox label stays two characters wide
+all_fig = main.update_chart(0, [exp_id], "abs", "all", {}, list(main.charts.METRICS))
+check("every data point can be plotted (gravity, temperature, tilt, battery, interval, signal)",
+      len(all_fig.data) == len(main.charts.METRICS),
+      f"{len(all_fig.data)} traces for {len(main.charts.METRICS)} metrics")
+check("each metric is drawn on its own y axis",
+      len({t.yaxis for t in all_fig.data}) == len(main.charts.METRICS),
+      f"axes={sorted({t.yaxis for t in all_fig.data})}")
+check("every 'Show' label stays within two characters",
+      all(len(v[0]) <= 2 for v in main.charts.METRICS.values()),
+      f"labels={[v[0] for v in main.charts.METRICS.values()]}")
 
 # NFR-06: on a phone-sized viewport the chart drops the legend and shortens the axis titles,
 # so the plot area is not eaten by a legend (the `viewport` store carries the breakpoint).
@@ -666,9 +728,9 @@ check("the FR-05 panel carries no repeated heading",
 # A range without a single measurement is a valid answer, not an error: download_csv then returns
 # no_update plus the amber "no measurements in the selected range" notice. Treating that as a crash
 # was the same mistake as reading `.data[0]` of an empty figure - so the CSV checks tolerate it.
-data, alert = main.download_csv([exp_id], "all")
+data, alert = main.download_csv([exp_id], "abs", "all")
 csv_all = data["content"].splitlines() if data is not main.dash.no_update else []
-data24, alert_24h = main.download_csv([exp_id], "24h")
+data24, alert_24h = main.download_csv([exp_id], "abs", "24h")
 csv_24h = data24["content"].splitlines() if data24 is not main.dash.no_update else []
 check("FR-21/FR-22 an empty range exports no file but says why",
       bool(csv_24h) or "no measurements in the selected range" in str(alert_24h),
@@ -677,14 +739,16 @@ check("FR-21 CSV header correct",
       csv_all[0].startswith("experiment,ispindel,timestamp_utc,timestamp_local,tilt_deg,"
                             "temperature_c,gravity_plato,battery_v,interval_s,rssi_dbm"),
       csv_all[0])
-exp_all = stable_count(lambda: len(csv_all) - 1, COUNT_EXP, {"id": exp_id})
-exp_24h = stable_count(lambda: len(csv_24h) - 1, COUNT_EXP_24H, {"id": exp_id})
+# `- 1` for the header, but never below 0: an empty range returns no file at all (`no_update`), so
+# `csv_24h` is empty and the honest number of data rows is 0, not -1.
+exp_all = stable_count(lambda: max(len(csv_all) - 1, 0), COUNT_EXP, {"id": exp_id})
+exp_24h = stable_count(lambda: max(len(csv_24h) - 1, 0), COUNT_EXP_24H, {"id": exp_id})
 check("FR-21 one line per measurement", exp_all[0] <= exp_all[1] <= exp_all[2],
       f"{exp_all[0]} <= lines {exp_all[1]} <= {exp_all[2]}")
 check("FR-22 time range in the export", exp_24h[0] <= exp_24h[1] <= exp_24h[2],
       f"{exp_24h[0]} <= lines {exp_24h[1]} <= {exp_24h[2]}")
 check("NFR-05 export feedback", "exported" in str(alert), str(alert)[:70])
-no_sel, alert2 = main.download_csv([], "all")
+no_sel, alert2 = main.download_csv([], "abs", "all")
 check("NFR-05 no silent no-op without a selection", "pick at least one" in str(alert2),
       str(alert2)[:60])
 tz_row = main.query("""SELECT recorded_at,
@@ -728,7 +792,7 @@ stats = main.query("""SELECT
         --
         -- Both groupings are **device-aware** on purpose: two iSpindels may transmit in the same
         -- second, so a global GROUP BY recorded_at reports a conflict that does not exist. It did,
-        -- as soon as tools/simulate.py --demo put six devices on one 15 minute grid.
+        -- as soon as six simulated devices shared one 15 minute grid.
         (SELECT count(*) FROM experiment a JOIN experiment b
            ON a.device_id = b.device_id AND a.id < b.id
           AND tstzrange(a.started_at, COALESCE(a.ended_at, 'infinity')) &&
@@ -742,6 +806,24 @@ check("FR-09 no measurement in two experiments", stats["double_assigned"] == 0)
 check("FR-03/FR-09 no two experiments of one iSpindel overlap", stats["overlapping"] == 0,
       f"{stats['overlapping']} overlapping pairs")
 print(f"      info: {stats['rows']} rows, max ingest lag {stats['max_lag']}")
+
+# ---- the seed loader and its two export quirks ------------------------------------------------
+# `seed/*.csv` are the real FR-21 exports and `tools/seed.py` is what fills an empty stack with
+# them, so this also pins down what "seeded" means: one transmission can be stored as two rows that
+# share a second, and a batch ends with the reading from the moment the spindel was lifted out.
+spec = importlib.util.spec_from_file_location("seed_tool", REPO / "tools" / "seed.py")
+seed_tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(seed_tool)
+
+_, _, mango_rows, mango_dropped = seed_tool.rows_of(REPO / "seed" / "mango_maracuya.csv")
+check("the seed loader drops the device-out reading",
+      mango_dropped == 1 and str(mango_rows[-1][0]) < "2026-11-05",
+      f"{mango_dropped} dropped, the batch ends {mango_rows[-1][0]}")
+_, _, lemon_rows, _ = seed_tool.rows_of(REPO / "seed" / "lemon_pale_lager.csv")
+split = [row for row in lemon_rows if str(row[0]).startswith("2026-10-31T00:52:17")]
+check("the seed loader merges the two rows of one transmission",
+      len(split) == 1 and split[0][1] is not None and split[0][3] is not None,
+      f"tilt={split[0][1] if split else None} gravity={split[0][3] if split else None}")
 
 # ---- cleanup -----------------------------------------------------------------
 # the temporary 3-day-old row hangs off the zz_validation device, so it goes with it

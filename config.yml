@@ -1,15 +1,14 @@
-# Settings for the iSpindel fermentation monitor (NFR-08: settings live here, not in the code).
-# Committed and free of machine-specific values: it describes the single-machine setup that
-# compose.yaml implements, so nothing has to be rewritten on another machine. A container run
-# overrides only the addresses (ISPINDEL_DB_DSN, ISPINDEL_MQTT_HOST, ISPINDEL_MQTT_PORT,
-# ISPINDEL_MQTT_CLIENT_ID); ISPINDEL_CONFIG points a component at a different file.
+# The one configuration file of the iSpindel fermentation monitor (NFR-08: settings live here, not
+# in the code). These are the values the compose stack uses - inside the container network the
+# services are reached by their service names (`db`, `broker`), which are the same on every machine.
+# A run outside the stack (a host-side `tools/` run, a second database) points ISPINDEL_CONFIG at
+# its own copy of this file; the README explains it.
 
 database:
-  # Only used by a run without containers (PostgreSQL on localhost).
-  dsn: "postgresql://ispindel:ispindel@localhost:5432/ispindel"
+  dsn: "postgresql://ispindel:ispindel@db:5432/ispindel"   # the `db` service of the stack
 
 mqtt:
-  host: "localhost"
+  host: "broker"                 # the `broker` service of the stack
   port: 1883
   client_id: "ispindel-ingest"   # must be unique per broker, or two clients kick each other off
   topic_prefix: "ispindel"       # topics are <prefix>/<device name>/<field>
@@ -19,7 +18,7 @@ mqtt:
 
 ingest:
   burst_seconds: 10              # fallback: max wait for the missing messages of a transmission
-  broker_refresh_seconds: 10     # FR-15: how often the running service re-reads the broker list
+  broker_refresh_seconds: 10     # FR-07: how often the running service re-reads the broker list
   gravity_unit: "P"              # unit of the calibration polynomial: "P" (Plato) or "SG"
   log_messages: true             # print every received topic - useful while testing hardware
 

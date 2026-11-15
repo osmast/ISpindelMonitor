@@ -58,23 +58,6 @@ def card(title, *children):
     )
 
 
-def stat(label, value, unit="", hint=""):
-    return html.Div(
-        className="rounded-lg corner-squircle border border-slate-200 p-3",
-        children=[
-            html.Div(label, className="text-xs uppercase tracking-wide text-slate-500"),
-            html.Div(
-                className="leading-tight",
-                children=[
-                    html.Span(value, className="text-2xl font-semibold tabular-nums"),
-                    html.Span(f" {unit}", className="text-sm text-slate-500"),
-                ],
-            ),
-            html.Div(hint, className="mt-1 text-xs text-slate-400"),
-        ],
-    )
-
-
 def zone(label, *children):
     """One data zone of the FR-13 batch card: an uppercase caption over the zone's lines."""
     return html.Div(

@@ -7,7 +7,7 @@ The seven messages of one transmission arrive within milliseconds; `tilt` comes 
 `recorded_at` = time of receipt (the payload carries no time). The next `tilt` and
 `burst_seconds` are only fallbacks for lost or late messages.
 
-FR-15: during the fermentation phase the participants each run *their own* broker, so the service
+FR-07: during the fermentation phase the participants each run *their own* broker, so the service
 listens on all of them at the same time: the broker from `config.yml` (NFR-08) plus every enabled
 row of the `mqtt_broker` table, which the dashboard's "MQTT brokers" dialog fills at runtime. One
 paho client per broker, each with its own client id - two clients sharing an id kick each other
@@ -32,14 +32,10 @@ ROOT = Path(__file__).resolve().parent.parent
 CFG = yaml.safe_load(Path(os.environ.get("ISPINDEL_CONFIG", ROOT / "config.yml")).read_text())
 MQTT_CFG = CFG["mqtt"]
 ING = CFG["ingest"]
-# NFR-08: config.yml holds the settings; these variables only override single values (compose).
-CFG["database"]["dsn"] = os.environ.get("ISPINDEL_DB_DSN", CFG["database"]["dsn"])
-MQTT_CFG["host"] = os.environ.get("ISPINDEL_MQTT_HOST", MQTT_CFG["host"])
-MQTT_CFG["port"] = int(os.environ.get("ISPINDEL_MQTT_PORT", MQTT_CFG["port"]))
-MQTT_CFG["client_id"] = os.environ.get("ISPINDEL_MQTT_CLIENT_ID",
-                                       MQTT_CFG.get("client_id", "ispindel-ingest"))
+# NFR-08: config.yml holds every setting (including the broker address); no env overrides here.
+BASE_CLIENT_ID = MQTT_CFG.get("client_id", "ispindel-ingest")
 KEEPALIVE = MQTT_CFG.get("keepalive_seconds", 120)
-# FR-15: how often the supervisor re-reads `mqtt_broker` (config.yml). 0 = only at startup.
+# FR-07: how often the supervisor re-reads `mqtt_broker` (config.yml). 0 = only at startup.
 BROKER_REFRESH = ING.get("broker_refresh_seconds", 10)
 
 # The topics of one transmission, in the order the firmware sends them (RSSI last).
@@ -51,7 +47,7 @@ log = logging.getLogger("ingest")
 conn = None
 LOCK = threading.RLock()
 
-# FR-15: the device belongs to the broker it published to, so the same iSpindel name on two
+# FR-07: the device belongs to the broker it published to, so the same iSpindel name on two
 # brokers stays two devices. The conflict target is the expression index from sql/schema.sql.
 INSERT_SQL = """
 WITH d AS (
@@ -130,7 +126,7 @@ def spec_target(spec):
 
 # After this many seconds a listener that never reached its broker is reported as unreachable: a
 # TCP-level failure (host down, wrong network, firewall) never fires `on_connect`, so without this
-# the dialog would show "no data yet" forever instead of naming the problem (FR-15).
+# the dialog would show "no data yet" forever instead of naming the problem (FR-07).
 REACH_GRACE = 60
 
 
@@ -153,7 +149,7 @@ class BrokerLink:
     """One MQTT connection: subscribes to <prefix>/+/+ and stores what arrives (FR-7 - FR-11).
 
     One instance per broker - the one from `config.yml` (`id is None`) plus every enabled
-    `mqtt_broker` row (FR-15) - each with its own paho client, client id, topic prefix, burst
+    `mqtt_broker` row (FR-07) - each with its own paho client, client id, topic prefix, burst
     buffer and last error. `messages` counts what arrived since the last supervisor pass, so the
     dashboard can see that a broker really delivers.
     """
@@ -164,8 +160,7 @@ class BrokerLink:
         self.target_key = spec_target(spec)
         self.host, self.port, self.username, self.password, self.prefix = self.target_key
         # the client id must differ per broker: two clients sharing one id kick each other off
-        self.client_id = (f"{MQTT_CFG.get('client_id', 'ispindel-ingest')}"
-                          + (f"-b{self.id}" if self.id else ""))
+        self.client_id = BASE_CLIENT_ID + (f"-b{self.id}" if self.id else "")
         self.buffer = {}        # device name -> {"started": float, "fields": {field: raw string}}
         self.messages = 0       # transmissions since the last supervisor pass
         self.stopping = False   # set by stop(): a deliberate close is not a connection loss
@@ -216,7 +211,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 
 
 def on_subscribe(client, userdata, mid, reason_codes, properties=None):
-    """Log (and report to the dialog) what the broker granted for our subscription (FR-15).
+    """Log (and report to the dialog) what the broker granted for our subscription (FR-07).
 
     A granted QoS of 0x80/128 means the broker **refused** the subscription. With mosquitto that
     happens when the `acl_file` lets the user connect and publish but not read - and then the ingest
@@ -255,7 +250,7 @@ def get_conn():
 
 
 def db_query(sql, params=None):
-    """Read helper for the service's own bookkeeping - the broker list (FR-15)."""
+    """Read helper for the service's own bookkeeping - the broker list (FR-07)."""
     with LOCK:
         with get_conn().cursor() as cur:
             cur.execute(sql, params or {})
@@ -264,7 +259,7 @@ def db_query(sql, params=None):
 
 
 def broker_status(link, connected=False, error=None, touched=False):
-    """Report one broker's state back to `mqtt_broker`; the dashboard's dialog shows it (FR-15).
+    """Report one broker's state back to `mqtt_broker`; the dashboard's dialog shows it (FR-07).
 
     Only brokers that exist as a row are written - the broker of config.yml has none - and a
     database hiccup is logged, never raised: it must not kill an MQTT callback.
@@ -288,7 +283,7 @@ def broker_status(link, connected=False, error=None, touched=False):
 
 
 def owns_name(link, name):
-    """True when `link` is the broker that owns this iSpindel name (FR-15).
+    """True when `link` is the broker that owns this iSpindel name (FR-07).
 
     The same iSpindel can be reachable through several brokers - a mosquitto bridge between two
     brokers, or a participant who mirrors his broker. Its name then belongs to exactly one device:
@@ -305,7 +300,7 @@ def store(link, name, burst):
 
     Called from the network thread of that broker and from `flush_stale()` in the main thread,
     so every database access goes through LOCK. `broker_id` travels in the row: the device is
-    created for the broker it published to (FR-15).
+    created for the broker it published to (FR-07).
     """
     global conn
     if not owns_name(link, name):        # the same device through a second broker (see owns_name)
@@ -363,7 +358,7 @@ def flush_stale(links):
 
 
 def broker_specs():
-    """The brokers to listen on (FR-15).
+    """The brokers to listen on (FR-07).
 
     The broker of `config.yml` (NFR-08) plus every enabled `mqtt_broker` row - the ones the
     dashboard's dialog added. A database hiccup must not tear down the running listeners, so an
@@ -382,7 +377,7 @@ def broker_specs():
 
 
 def sync_links(links):
-    """Connect/disconnect so the running listeners match the broker list (FR-15).
+    """Connect/disconnect so the running listeners match the broker list (FR-07).
 
     A broker that was added starts listening, one that was edited, disabled or deleted is closed.
     An unreachable broker stays in the list and paho keeps retrying in the background.
@@ -404,7 +399,7 @@ def sync_links(links):
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     links = {}
-    log.info("ingest starting - own broker %s:%s, broker list re-read every %s s (FR-15)",
+    log.info("ingest starting - own broker %s:%s, broker list re-read every %s s (FR-07)",
              MQTT_CFG["host"], MQTT_CFG["port"], BROKER_REFRESH)
     try:
         next_pass = 0.0
